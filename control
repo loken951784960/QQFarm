@@ -1,7 +1,7 @@
 Package: com.i80k.qqfarm
 Name: QQFarm
 Depends: mobilesubstrate, firmware (>= 14.0)
-Version: 1.0.2
+Version: 1.0.3
 Architecture: iphoneos-arm
 Description: QQ 经典农场 code 自动提取插件
 Maintainer: 佚名

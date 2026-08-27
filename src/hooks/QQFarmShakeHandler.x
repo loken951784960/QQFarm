@@ -7,29 +7,24 @@
 
 - (void)motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event {
     if (motion == UIEventSubtypeMotionShake) {
-        // 获取最新的 code
-        NSString *code = [QQFarmUtils getLastCapturedCode];
-
-        // 只有当 code 存在且不为空时才显示悬浮窗
-        if (code && code.length > 0) {
-            // 在主线程显示悬浮窗
-            dispatch_async(dispatch_get_main_queue(), ^{
-                QQFarmOverlay *overlay = [QQFarmOverlay sharedInstance];
-                // iOS 13+ 要求 UIWindow 必须挂到 UIWindowScene 才能显示，
-                // 否则即使 hidden=NO 也不会渲染（悬浮窗在 iOS13+ 不显示的修复）
-                if (@available(iOS 13.0, *)) {
-                    if (!overlay.windowScene) {
-                        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                                overlay.windowScene = (UIWindowScene *)scene;
-                                break;
-                            }
+        // 摇一摇作为备用呼出方式：无论是否已截获 Code 都显示面板
+        // 在主线程显示悬浮窗
+        dispatch_async(dispatch_get_main_queue(), ^{
+            QQFarmOverlay *overlay = [QQFarmOverlay sharedInstance];
+            // iOS 13+ 要求 UIWindow 必须挂到 UIWindowScene 才能显示，
+            // 否则即使 hidden=NO 也不会渲染（悬浮窗在 iOS13+ 不显示的修复）
+            if (@available(iOS 13.0, *)) {
+                if (!overlay.windowScene) {
+                    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                        if ([scene isKindOfClass:[UIWindowScene class]]) {
+                            overlay.windowScene = (UIWindowScene *)scene;
+                            break;
                         }
                     }
                 }
-                [overlay showWithCode:code];
-            });
-        }
+            }
+            [overlay showWithCode:[QQFarmUtils getLastCapturedCode]];
+        });
     }
     %orig;
 }

@@ -358,6 +358,7 @@ static char kAccountKey;
     } completion:^(BOOL finished) {
         self.hidden = YES;
         self.alpha = 1; // 重置 alpha 以便下次显示
+        [[NSNotificationCenter defaultCenter] postNotificationName:kQQFarmOverlayDidHideNotification object:nil];
     }];
 }
 
