@@ -25,6 +25,13 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
+      - name: Install iOS cross toolchain (Linux)
+        run: |
+          git lfs install
+          rm -rf "$THEOS/toolchain"
+          git clone https://github.com/theos/toolchain.git "$THEOS/toolchain"
+          git -C "$THEOS/toolchain" lfs pull
+
       - name: Download iOS SDK (16.5)
         run: |
           mkdir -p $THEOS/sdks
