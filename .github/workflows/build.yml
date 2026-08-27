@@ -1,0 +1,40 @@
+name: Build Rootless Deb
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git perl python3 zip curl subversion dpkg-dev
+
+      - name: Set up Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Download iOS SDK (16.5)
+        run: |
+          mkdir -p $THEOS/sdks
+          svn export --force https://github.com/theos/sdks/trunk/iPhoneOS16.5.sdk $THEOS/sdks/iPhoneOS16.5.sdk
+
+      - name: Build rootless deb
+        run: |
+          make package FINALPACKAGE=1
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqfarm-rootless-deb
+          path: packages/*.deb
+          if-no-files-found: error
