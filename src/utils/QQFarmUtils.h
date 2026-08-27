@@ -2,7 +2,7 @@
 
 /**
  * 工具类：QQFarmUtils
- * 提供 URL 检查和 code 提取功能
+ * 提供 URL 检查、code 提取、零点击自动上传与默认配置能力
  */
 @interface QQFarmUtils : NSObject
 
@@ -17,5 +17,10 @@
  * @return 捕获到的 Code，如果没有则返回 nil
  */
 + (NSString *)getLastCapturedCode;
+
+/**
+ * 首次启动时写入默认服务器/Token 配置（已存在则跳过，不覆盖用户设置）
+ */
++ (void)ensureDefaultConfig;
 
 @end
