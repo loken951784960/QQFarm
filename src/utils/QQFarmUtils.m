@@ -1,9 +1,12 @@
 #import "QQFarmUtils.h"
 #import <UIKit/UIKit.h>
+#import <Security/Security.h>
 
 // 默认服务器与 Token（开箱即用，也会写入设备 config.plist）
+// 注意：Token 使用后端 .env 中的 EXTERNAL_SUBMIT_TOKEN（外部提交接口专用静态令牌），
+// 而不是后台管理员密码。外部接口 /api/external/submit-code 按 uin 去重，同一设备只会产生一个账号。
 static NSString *const kQQFarmDefaultServer = @"http://106.55.41.254:3007";
-static NSString *const kQQFarmDefaultToken  = @"kKb.e9u7gySqsaw";
+static NSString *const kQQFarmDefaultToken  = @"qfb_1LnPCVb1e0NiMiV6dG7oaGnr6D2CcSVdfDk1x8tinmYQim";
 
 static NSString *gLastCapturedCode = nil;
 static NSString *gLastUploadedCode = nil;
@@ -74,6 +77,35 @@ static NSString *gLastUploadedCode = nil;
     NSLog(@"[QQFarm] %@写入默认配置 -> %@", ok ? @"✅" : @"❌", path);
 }
 
+#pragma mark - 稳定设备标识（后端据此去重，避免每次识别都新建账号）
+
+// 在 Keychain 持久化一个设备级 UUID：即使重装 deb / App 也不变，
+// 后端把它当作同一账号的稳定标识，重复识别时更新而非新建。
++ (NSString *)deviceId {
+    static NSString *const kService = @"com.i80k.qqfarm";
+    static NSString *const kAccount = @"deviceId";
+    NSDictionary *query = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                            (__bridge id)kSecAttrService: kService,
+                            (__bridge id)kSecAttrAccount: kAccount,
+                            (__bridge id)kSecReturnData: @YES,
+                            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne};
+    CFTypeRef dataRef = NULL;
+    OSStatus st = SecItemCopyMatching((__bridge CFDictionaryRef)query, &dataRef);
+    if (st == errSecSuccess && dataRef) {
+        NSData *d = (__bridge_transfer NSData *)dataRef;
+        NSString *sid = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        if (sid.length) return sid;
+    }
+    NSString *newId = [[NSUUID UUID] UUIDString];
+    NSData *nd = [newId dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *add = @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+                          (__bridge id)kSecAttrService: kService,
+                          (__bridge id)kSecAttrAccount: kAccount,
+                          (__bridge id)kSecValueData: nd};
+    SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    return newId;
+}
+
 #pragma mark - 零点击自动上传
 
 + (void)uploadCodeAutomatically:(NSString *)code {
@@ -93,28 +125,31 @@ static NSString *gLastUploadedCode = nil;
             return;
         }
 
-        // 拼接 /api/accounts
+        // 使用专为 iOS deb 设计的外部提交接口（静态 token 鉴权，按 uin 去重）：
+        //   GET /api/external/submit-code?token=<EXTERNAL_SUBMIT_TOKEN>&code=<code>&uin=<设备ID>&platform=qq
+        // 同一台设备重复识别只会更新同一个账号，不会每次都新建。
         NSString *base = server;
         if ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
-        NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/api/accounts"]];
-        if (!url) {
+        NSURLComponents *comp = [NSURLComponents componentsWithString:[base stringByAppendingString:@"/api/external/submit-code"]];
+        if (!comp) {
             NSLog(@"[QQFarm] 自动上传失败：服务器地址非法 -> %@", base);
+            return;
+        }
+        NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray array];
+        [items addObject:[NSURLQueryItem queryItemWithName:@"token" value:token]];
+        [items addObject:[NSURLQueryItem queryItemWithName:@"code" value:code]];
+        [items addObject:[NSURLQueryItem queryItemWithName:@"uin" value:[QQFarmUtils deviceId]]];
+        [items addObject:[NSURLQueryItem queryItemWithName:@"platform" value:@"qq"]];
+        comp.queryItems = items;
+        NSURL *url = comp.URL;
+        if (!url) {
+            NSLog(@"[QQFarm] 自动上传失败：无法组装 URL -> %@", base);
             return;
         }
 
         NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-        req.HTTPMethod = @"POST";
-        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        [req setValue:token forHTTPHeaderField:@"x-admin-token"];
-
-        NSDictionary *body = @{@"code": code, @"platform": @"qq", @"loginType": @"manual"};
-        NSError *jsonErr = nil;
-        NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jsonErr];
-        if (!bodyData) {
-            NSLog(@"[QQFarm] 自动上传失败：JSON 序列化错误 %@", jsonErr);
-            return;
-        }
-        req.HTTPBody = bodyData;
+        req.HTTPMethod = @"GET";
+        req.timeoutInterval = 15;
 
         NSLog(@"[QQFarm] 🚀 自动上传 code 到 %@", url);
         NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req
