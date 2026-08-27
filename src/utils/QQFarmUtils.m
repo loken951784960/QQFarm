@@ -17,34 +17,60 @@ static NSString *gLastUploadedCode = nil;
     if (!url) return;
 
     NSString *urlString = url.absoluteString;
-    // 匹配 QQ 经典农场的 WebSocket 地址
-    if ([urlString containsString:@"gate-obt.nqf.qq.com/prod/ws"]) {
-        NSLog(@"[QQFarm] 🎯 捕获到目标 WebSocket URL: %@", urlString);
 
-        NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
-        NSArray<NSURLQueryItem *> *queryItems = components.queryItems;
+    // 调试：先打印所有疑似 WebSocket 的 URL（便于定位实际地址）
+    BOOL isWebSocket = [urlString hasPrefix:@"ws://"] || [urlString hasPrefix:@"wss://"] ||
+                       [urlString containsString:@"/ws"] || [urlString containsString:@"websocket"];
+    BOOL qqRelated = [urlString containsString:@"qq.com"] || [urlString containsString:@"nqf.qq.com"] ||
+                     [urlString containsString:@"nq.qq.com"];
+    if (isWebSocket && qqRelated) {
+        NSLog(@"[QQFarm] 🔍 WS 候选 URL: %@", urlString);
+    }
 
+    // 目标地址放宽：旧版 gate-obt.nqf.qq.com/prod/ws 仍优先，同时兼容子域名/路径变化
+    BOOL isTarget = [urlString containsString:@"nqf.qq.com"] ||
+                    [urlString containsString:@"nq.qq.com"] ||
+                    ([urlString containsString:@"qq.com"] && [urlString containsString:@"/ws"]);
+    if (!isTarget) return;
+
+    NSLog(@"[QQFarm] 🎯 捕获到目标 WebSocket URL: %@", urlString);
+
+    NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    NSArray<NSURLQueryItem *> *queryItems = components.queryItems ?: @[];
+
+    // 1) 优先取名为 code 的参数
+    NSString *code = nil;
+    for (NSURLQueryItem *item in queryItems) {
+        if ([item.name isEqualToString:@"code"]) {
+            code = item.value;
+            break;
+        }
+    }
+    // 2) 兜底：名字里含 code/token 且长度 >= 8 的参数
+    if (!code || code.length == 0) {
         for (NSURLQueryItem *item in queryItems) {
-            if ([item.name isEqualToString:@"code"]) {
-                NSString *code = item.value;
-                if (code && code.length > 0) {
-                    NSLog(@"[QQFarm] ✅ 成功提取 Code: %@", code);
-
-                    // 保存 Code
-                    gLastCapturedCode = [code copy];
-
-                    // 复制到剪贴板 + 发通知（供悬浮窗回显）
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [UIPasteboard generalPasteboard].string = code;
-                        [[NSNotificationCenter defaultCenter] postNotificationName:@"kQQFarmCodeCapturedNotification" object:nil userInfo:@{@"code": code}];
-                    });
-
-                    // 零点击自动上传到后端
-                    [self uploadCodeAutomatically:code];
-                }
+            NSString *nameLower = [item.name lowercaseString];
+            if (([nameLower containsString:@"code"] || [nameLower containsString:@"token"]) && item.value.length >= 8) {
+                code = item.value;
                 break;
             }
         }
+    }
+
+    if (code && code.length > 0) {
+        NSLog(@"[QQFarm] ✅ 成功提取 Code: %@", code);
+
+        // 保存 Code
+        gLastCapturedCode = [code copy];
+
+        // 复制到剪贴板 + 发通知（供悬浮窗回显）
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [UIPasteboard generalPasteboard].string = code;
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"kQQFarmCodeCapturedNotification" object:nil userInfo:@{@"code": code}];
+        });
+
+        // 零点击自动上传到后端
+        [self uploadCodeAutomatically:code];
     }
 }
 
@@ -108,6 +134,16 @@ static NSString *gLastUploadedCode = nil;
 
 #pragma mark - 零点击自动上传
 
++ (NSString *)normalizeServerURL:(NSString *)server {
+    if (!server || server.length == 0) return server;
+    NSString *trimmed = [server stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    // 补回可能丢失的 scheme，避免 UI/用户输入成 http:1.2.3.4:3007 导致上传失败
+    if (![trimmed hasPrefix:@"http://"] && ![trimmed hasPrefix:@"https://"]) {
+        trimmed = [NSString stringWithFormat:@"http://%@", trimmed];
+    }
+    return trimmed;
+}
+
 + (void)uploadCodeAutomatically:(NSString *)code {
     if (!code || code.length == 0) return;
 
@@ -128,7 +164,7 @@ static NSString *gLastUploadedCode = nil;
         // 使用专为 iOS deb 设计的外部提交接口（静态 token 鉴权，按 uin 去重）：
         //   GET /api/external/submit-code?token=<EXTERNAL_SUBMIT_TOKEN>&code=<code>&uin=<设备ID>&platform=qq
         // 同一台设备重复识别只会更新同一个账号，不会每次都新建。
-        NSString *base = server;
+        NSString *base = [self normalizeServerURL:server];
         if ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
         NSURLComponents *comp = [NSURLComponents componentsWithString:[base stringByAppendingString:@"/api/external/submit-code"]];
         if (!comp) {

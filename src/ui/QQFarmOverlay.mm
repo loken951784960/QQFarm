@@ -173,7 +173,7 @@ static char kAccountKey;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onCodeCaptured:) name:@"kQQFarmCodeCapturedNotification" object:nil];
         
         // 服务器输入框 (修改回使用配置文件)
-        _serverInput.text = [self loadConfig][@"QQFarmServer"];
+        _serverInput.text = [QQFarmUtils normalizeServerURL:[self loadConfig][@"QQFarmServer"]];
         
         // 保存配置按钮
         _saveConfigButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -394,7 +394,7 @@ static char kAccountKey;
 }
 
 - (void)saveSettings {
-    NSString *server = self.serverInput.text ?: @"";
+    NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
     NSString *token = self.tokenInput.text ?: @"";
     
     NSDictionary *config = @{
