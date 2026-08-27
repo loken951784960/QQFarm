@@ -66,7 +66,7 @@ static char kAccountKey;
         
         // --- 顶部 Tabs ---
         _tabAccountBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        _tabAccountBtn.frame = CGRectMake(10, 10, 135, 35);
+        _tabAccountBtn.frame = CGRectMake(10, 10, 120, 35);
         [_tabAccountBtn setTitle:@"账号" forState:UIControlStateNormal];
         _tabAccountBtn.backgroundColor = [UIColor systemBlueColor]; // 默认选中
         [_tabAccountBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -76,7 +76,7 @@ static char kAccountKey;
         [_containerView addSubview:_tabAccountBtn];
 
         _tabSettingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        _tabSettingsBtn.frame = CGRectMake(155, 10, 135, 35);
+        _tabSettingsBtn.frame = CGRectMake(140, 10, 120, 35);
         [_tabSettingsBtn setTitle:@"设置" forState:UIControlStateNormal];
         _tabSettingsBtn.backgroundColor = [UIColor lightGrayColor]; // 默认未选中
         [_tabSettingsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -185,14 +185,19 @@ static char kAccountKey;
         [_saveConfigButton addTarget:self action:@selector(saveSettings) forControlEvents:UIControlEventTouchUpInside];
         [_settingsView addSubview:_saveConfigButton];
         
-        // --- 公共底部 ---
-        // 关闭按钮
+        // --- 右上角关闭按钮 (✕) ---
+        // 移到右上角，避免被弹起的键盘遮挡
         _closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _closeButton.frame = CGRectMake(20, 355, 260, 30);
-        [_closeButton setTitle:@"关闭" forState:UIControlStateNormal];
-        [_closeButton setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
+        _closeButton.frame = CGRectMake(262, 6, 30, 32);
+        [_closeButton setTitle:@"✕" forState:UIControlStateNormal];
+        [_closeButton setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
+        _closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
         [_closeButton addTarget:self action:@selector(hide) forControlEvents:UIControlEventTouchUpInside];
         [_containerView addSubview:_closeButton];
+
+        // 监听键盘，弹起时上移面板避免遮挡
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     }
     return self;
 }
@@ -330,9 +335,9 @@ static char kAccountKey;
 
 - (void)showWithCode:(NSString *)code {
     self.hidden = NO;
-    // 不需要 makeKeyAndVisible，因为我们不需要成为 KeyWindow (那样会抢夺键盘焦点)
-    // 只需要 hidden = NO 即可显示在最上层
-    
+    // 复位面板位置（避免上次键盘上移后残留偏移）
+    self.containerView.center = self.center;
+
     // 简单的弹出动画
     self.containerView.transform = CGAffineTransformMakeScale(0.8, 0.8);
     self.alpha = 0;
@@ -353,6 +358,37 @@ static char kAccountKey;
     } completion:^(BOOL finished) {
         self.hidden = YES;
         self.alpha = 1; // 重置 alpha 以便下次显示
+    }];
+}
+
+#pragma mark - 键盘处理 (避免输入框/按钮被键盘遮挡)
+
+- (void)keyboardWillShow:(NSNotification *)notification {
+    NSDictionary *info = notification.userInfo;
+    CGRect kbRect = [info[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGFloat kbHeight = kbRect.size.height;
+    if (kbHeight <= 0) return;
+
+    CGFloat screenH = self.bounds.size.height;
+    CGFloat containerH = self.containerView.frame.size.height;
+    // 目标：面板底部落在键盘上方 10pt 处
+    CGFloat desiredBottom = screenH - kbHeight - 10;
+    CGFloat currentBottom = self.containerView.center.y + containerH / 2.0;
+    CGFloat delta = currentBottom - desiredBottom;
+    if (delta > 0) {
+        CGFloat newCenterY = self.containerView.center.y - delta;
+        // 限制上移幅度，保证面板顶部不超出屏幕
+        CGFloat minCenterY = 10 + containerH / 2.0;
+        if (newCenterY < minCenterY) newCenterY = minCenterY;
+        [UIView animateWithDuration:0.25 animations:^{
+            self.containerView.center = CGPointMake(self.containerView.center.x, newCenterY);
+        }];
+    }
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    [UIView animateWithDuration:0.25 animations:^{
+        self.containerView.center = self.center;
     }];
 }
 
