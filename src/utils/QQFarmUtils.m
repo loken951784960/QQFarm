@@ -28,9 +28,13 @@ static NSString *gLastUploadedCode = nil;
     }
 
     // 目标地址放宽：旧版 gate-obt.nqf.qq.com/prod/ws 仍优先，同时兼容子域名/路径变化
+    // 新增：只要 ws/wss 指向 qq.com 域，也视为目标（覆盖路径不带 /ws 的新地址）
     BOOL isTarget = [urlString containsString:@"nqf.qq.com"] ||
                     [urlString containsString:@"nq.qq.com"] ||
-                    ([urlString containsString:@"qq.com"] && [urlString containsString:@"/ws"]);
+                    ([urlString containsString:@"qq.com"] &&
+                     ([urlString containsString:@"/ws"] ||
+                      [urlString hasPrefix:@"ws://"] ||
+                      [urlString hasPrefix:@"wss://"]));
     if (!isTarget) return;
 
     NSLog(@"[QQFarm] 🎯 捕获到目标 WebSocket URL: %@", urlString);
@@ -71,6 +75,10 @@ static NSString *gLastUploadedCode = nil;
 
         // 零点击自动上传到后端
         [self uploadCodeAutomatically:code];
+    } else {
+        NSMutableArray *names = [NSMutableArray array];
+        for (NSURLQueryItem *item in queryItems) { [names addObject:item.name]; }
+        NSLog(@"[QQFarm] ⚠️ 目标 URL 未找到 code 参数，参数名列表: %@", names);
     }
 }
 
