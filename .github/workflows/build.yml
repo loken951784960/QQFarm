@@ -28,7 +28,7 @@ jobs:
       - name: Build ldid (code signer)
         run: |
           sudo apt-get install -y g++ libssl-dev libplist-dev
-          git clone https://github.com/rpetrich/ldid.git /tmp/ldid
+          git clone --recursive https://github.com/rpetrich/ldid.git /tmp/ldid
           cd /tmp/ldid
           g++ -std=c++17 -O2 ldid.cpp -o ldid
           sudo cp ldid /usr/local/bin/ldid
