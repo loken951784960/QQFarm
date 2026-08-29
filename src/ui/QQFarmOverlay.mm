@@ -64,11 +64,14 @@ static char kAccountKey;
         
         [self.rootViewController.view addSubview:_containerView];
         
-        // --- 顶部 Tabs ---
+        // --- 顶部 Tabs（与图片一致：设置默认选中） ---
+        CGFloat tabY = 12;
+        CGFloat tabW = 130;
+        CGFloat tabX = (300 - tabW * 2) / 2.0; // 居中 20
         _tabAccountBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        _tabAccountBtn.frame = CGRectMake(10, 10, 120, 35);
+        _tabAccountBtn.frame = CGRectMake(tabX, tabY, tabW, 34);
         [_tabAccountBtn setTitle:@"账号" forState:UIControlStateNormal];
-        _tabAccountBtn.backgroundColor = [UIColor systemBlueColor]; // 默认选中
+        _tabAccountBtn.backgroundColor = [UIColor lightGrayColor]; // 默认未选中
         [_tabAccountBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         _tabAccountBtn.layer.cornerRadius = 8;
         _tabAccountBtn.tag = 0;
@@ -76,9 +79,9 @@ static char kAccountKey;
         [_containerView addSubview:_tabAccountBtn];
 
         _tabSettingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        _tabSettingsBtn.frame = CGRectMake(140, 10, 120, 35);
+        _tabSettingsBtn.frame = CGRectMake(tabX + tabW, tabY, tabW, 34);
         [_tabSettingsBtn setTitle:@"设置" forState:UIControlStateNormal];
-        _tabSettingsBtn.backgroundColor = [UIColor lightGrayColor]; // 默认未选中
+        _tabSettingsBtn.backgroundColor = [UIColor systemBlueColor]; // 默认选中
         [_tabSettingsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         _tabSettingsBtn.layer.cornerRadius = 8;
         _tabSettingsBtn.tag = 1;
@@ -86,7 +89,8 @@ static char kAccountKey;
         [_containerView addSubview:_tabSettingsBtn];
 
         // --- 账号视图 (Account View) ---
-        _accountView = [[UIView alloc] initWithFrame:CGRectMake(0, 50, 300, 300)];
+        _accountView = [[UIView alloc] initWithFrame:CGRectMake(0, 54, 300, 300)];
+        _accountView.hidden = YES; // 默认隐藏
         [_containerView addSubview:_accountView];
 
         // 账号列表 ScrollView
@@ -113,72 +117,70 @@ static char kAccountKey;
         [_accountView addSubview:_addAccountButton];
 
         // --- 设置视图 (Settings View) ---
-        _settingsView = [[UIView alloc] initWithFrame:CGRectMake(0, 50, 300, 300)];
-        _settingsView.hidden = YES; // 默认隐藏
+        _settingsView = [[UIView alloc] initWithFrame:CGRectMake(0, 54, 300, 300)];
+        _settingsView.hidden = NO; // 默认显示设置页
         [_containerView addSubview:_settingsView];
 
-        // 服务器标签
-        _serverLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, 60, 30)];
+        // 服务器
+        _serverLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 25, 70, 32)];
         _serverLabel.text = @"服务器:";
-        _serverLabel.font = [UIFont systemFontOfSize:14];
+        _serverLabel.font = [UIFont systemFontOfSize:15];
         _serverLabel.textColor = [UIColor blackColor];
         [_settingsView addSubview:_serverLabel];
 
-        // 服务器输入框
-        _serverInput = [[UITextField alloc] initWithFrame:CGRectMake(80, 20, 200, 30)];
+        _serverInput = [[UITextField alloc] initWithFrame:CGRectMake(95, 25, 185, 32)];
         _serverInput.borderStyle = UITextBorderStyleRoundedRect;
-        _serverInput.placeholder = @"请输入服务器地址";
+        _serverInput.placeholder = @"http://ip:port";
         _serverInput.font = [UIFont systemFontOfSize:14];
         _serverInput.textColor = [UIColor blackColor];
         _serverInput.autocapitalizationType = UITextAutocapitalizationTypeNone;
         _serverInput.autocorrectionType = UITextAutocorrectionTypeNo;
+        _serverInput.clearButtonMode = UITextFieldViewModeWhileEditing;
+        _serverInput.text = [QQFarmUtils normalizeServerURL:[self loadConfig][@"QQFarmServer"]];
         [_settingsView addSubview:_serverInput];
 
-        // Token 标签
-        _tokenLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 70, 60, 30)];
+        // Token
+        _tokenLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 72, 70, 32)];
         _tokenLabel.text = @"Token:";
-        _tokenLabel.font = [UIFont systemFontOfSize:14];
+        _tokenLabel.font = [UIFont systemFontOfSize:15];
         _tokenLabel.textColor = [UIColor blackColor];
         [_settingsView addSubview:_tokenLabel];
 
-        // Token 输入框
-        _tokenInput = [[UITextField alloc] initWithFrame:CGRectMake(80, 70, 200, 30)];
+        _tokenInput = [[UITextField alloc] initWithFrame:CGRectMake(95, 72, 185, 32)];
         _tokenInput.borderStyle = UITextBorderStyleRoundedRect;
         _tokenInput.placeholder = @"请输入 Token";
         _tokenInput.font = [UIFont systemFontOfSize:14];
         _tokenInput.textColor = [UIColor blackColor];
         _tokenInput.autocapitalizationType = UITextAutocapitalizationTypeNone;
         _tokenInput.autocorrectionType = UITextAutocorrectionTypeNo;
+        _tokenInput.clearButtonMode = UITextFieldViewModeWhileEditing;
         _tokenInput.text = [self loadConfig][@"QQFarmToken"];
         [_settingsView addSubview:_tokenInput];
         
-        // Code 标签
-        UILabel *codeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 120, 60, 30)];
+        // Code（只读展示当前捕获到的 code）
+        UILabel *codeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 119, 70, 32)];
         codeLabel.text = @"Code:";
-        codeLabel.font = [UIFont systemFontOfSize:14];
+        codeLabel.font = [UIFont systemFontOfSize:15];
         codeLabel.textColor = [UIColor blackColor];
         [_settingsView addSubview:codeLabel];
         
-        // Code 输入框 (只读)
-        _codeInput = [[UITextField alloc] initWithFrame:CGRectMake(80, 120, 200, 30)];
+        _codeInput = [[UITextField alloc] initWithFrame:CGRectMake(95, 119, 185, 32)];
         _codeInput.borderStyle = UITextBorderStyleRoundedRect;
         _codeInput.placeholder = @"暂无获取到的 Code";
         _codeInput.font = [UIFont systemFontOfSize:14];
-        _codeInput.textColor = [UIColor grayColor];
-        _codeInput.enabled = NO; // 禁止输入
-        _codeInput.text = [QQFarmUtils getLastCapturedCode]; // 填充获取到的 code
+        _codeInput.textColor = [UIColor blackColor];
+        _codeInput.enabled = NO; // 仅展示
+        _codeInput.text = [QQFarmUtils getLastCapturedCode];
         [_settingsView addSubview:_codeInput];
         
         // 监听 Code 捕获通知
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onCodeCaptured:) name:@"kQQFarmCodeCapturedNotification" object:nil];
         
-        // 服务器输入框 (修改回使用配置文件)
-        _serverInput.text = [QQFarmUtils normalizeServerURL:[self loadConfig][@"QQFarmServer"]];
-        
         // 保存配置按钮
         _saveConfigButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _saveConfigButton.frame = CGRectMake(20, 170, 260, 40); // 调整位置
+        _saveConfigButton.frame = CGRectMake(20, 175, 260, 44);
         [_saveConfigButton setTitle:@"保存配置" forState:UIControlStateNormal];
+        _saveConfigButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
         _saveConfigButton.backgroundColor = [UIColor systemBlueColor];
         [_saveConfigButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         _saveConfigButton.layer.cornerRadius = 8;
@@ -186,9 +188,8 @@ static char kAccountKey;
         [_settingsView addSubview:_saveConfigButton];
         
         // --- 右上角关闭按钮 (✕) ---
-        // 移到右上角，避免被弹起的键盘遮挡
         _closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _closeButton.frame = CGRectMake(262, 6, 30, 32);
+        _closeButton.frame = CGRectMake(258, 8, 30, 30);
         [_closeButton setTitle:@"✕" forState:UIControlStateNormal];
         [_closeButton setTitleColor:[UIColor systemRedColor] forState:UIControlStateNormal];
         _closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];

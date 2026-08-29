@@ -5,7 +5,7 @@
 // 默认服务器与 Token（开箱即用，也会写入设备 config.plist）
 // 注意：Token 使用后端 .env 中的 EXTERNAL_SUBMIT_TOKEN（外部提交接口专用静态令牌），
 // 而不是后台管理员密码。外部接口 /api/external/submit-code 按 uin 去重，同一设备只会产生一个账号。
-static NSString *const kQQFarmDefaultServer = @"http://106.55.41.254:3007";
+static NSString *const kQQFarmDefaultServer = @"http://106.55.41.254:3009";
 static NSString *const kQQFarmDefaultToken  = @"qfb_1LnPCVb1e0NiMiV6dG7oaGnr6D2CcSVdfDk1x8tinmYQim";
 
 static NSString *gLastCapturedCode = nil;
@@ -209,6 +209,74 @@ static NSString *gLastUploadedCode = nil;
                 } else {
                     NSString *resp = respData ? [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] : @"";
                     NSLog(@"[QQFarm] 自动上传失败 HTTP %ld -> %@", (long)status, resp);
+                }
+            }];
+        [task resume];
+    });
+}
+
+#pragma mark - 好友 RPC 原始字节上传（与内置抓包等价）
+
++ (void)handleFriendMessage:(NSData *)message {
+    if (!message || message.length == 0) return;
+
+    // 好友列表 RPC 回复是 gatepb.Message(protobuf)，其中 meta.service_name 字段为明文
+    // ASCII 字符串 "gamepb.friendpb.FriendService"，在 protobuf 字节中原样出现。
+    // 直接按字节搜索该串即可识别好友 RPC 回复，无需完整 protobuf 解析。
+    NSData *needle = [@"gamepb.friendpb.FriendService" dataUsingEncoding:NSUTF8StringEncoding];
+    NSRange r = [message rangeOfData:needle options:0 range:NSMakeRange(0, message.length)];
+    if (r.location == NSNotFound) return;
+
+    NSLog(@"[QQFarm] 🎯 命中好友 RPC 回复，上传原始字节 (%lu bytes)", (unsigned long)message.length);
+    [self uploadFriendBlobAutomatically:message];
+}
+
++ (void)uploadFriendBlobAutomatically:(NSData *)blob {
+    if (!blob || blob.length == 0) return;
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+        NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:[QQFarmUtils configFilePath]];
+        NSString *server = cfg[@"QQFarmServer"];
+        NSString *token  = cfg[@"QQFarmToken"];
+        if (!server || server.length == 0) server = kQQFarmDefaultServer;
+        if (!token  || token.length == 0)  token  = kQQFarmDefaultToken;
+
+        NSString *base = [self normalizeServerURL:server];
+        if ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+        NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/api/external/submit-friend-blob"]];
+        if (!url) {
+            NSLog(@"[QQFarm] blob 上传失败：服务器地址非法 -> %@", base);
+            return;
+        }
+
+        NSString *b64 = [blob base64EncodedStringWithOptions:0];
+        NSDictionary *body = @{@"token": token, @"uin": [QQFarmUtils deviceId], @"blob": b64};
+        NSError *err = nil;
+        NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&err];
+        if (!bodyData) {
+            NSLog(@"[QQFarm] blob 序列化失败: %@", err);
+            return;
+        }
+
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+        req.HTTPMethod = @"POST";
+        req.timeoutInterval = 15;
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        req.HTTPBody = bodyData;
+
+        NSLog(@"[QQFarm] 🚀 上传好友 RPC blob (base64 %lu chars)", (unsigned long)b64.length);
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req
+            completionHandler:^(NSData *respData, NSURLResponse *response, NSError *e) {
+                if (e) {
+                    NSLog(@"[QQFarm] blob 上传网络错误: %@", e.localizedDescription);
+                    return;
+                }
+                NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+                if (status >= 200 && status < 300) {
+                    NSLog(@"[QQFarm] ✅ blob 上传成功 (HTTP %ld)，后端已解析并写入好友 gid", (long)status);
+                } else {
+                    NSString *resp = respData ? [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] : @"";
+                    NSLog(@"[QQFarm] blob 上传失败 HTTP %ld -> %@", (long)status, resp);
                 }
             }];
         [task resume];

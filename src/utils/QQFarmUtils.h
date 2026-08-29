@@ -28,4 +28,11 @@
  */
 + (NSString *)normalizeServerURL:(NSString *)server;
 
+/**
+ * 从 WebSocket 收到的二进制消息中识别好友 RPC（gamepb.friendpb.FriendService），
+ * 命中后将原始 protobuf 字节 base64 上传到后端 submit-friend-blob 接口。
+ * @param message 服务器下发的 wss 消息体（protobuf 二进制）
+ */
++ (void)handleFriendMessage:(NSData *)message;
+
 @end
