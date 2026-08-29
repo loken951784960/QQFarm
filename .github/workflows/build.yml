@@ -22,16 +22,8 @@ jobs:
 
       - name: Set up Theos
         run: |
-          git clone --recursive https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/theos/theos.git $THEOS
+          git clone --recursive https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
-
-      - name: Build ldid (code signer)
-        run: |
-          sudo apt-get install -y libplist-dev
-          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/theos/ldid.git /tmp/ldid
-          cd /tmp/ldid && ./make.sh
-          sudo cp /tmp/ldid/ldid /usr/local/bin/ldid
-          ldid 2>&1 | head -1
 
       - name: Install iOS cross toolchain (Linux, public release)
         run: |
@@ -45,7 +37,7 @@ jobs:
         run: |
           mkdir -p $THEOS/sdks
           git lfs install
-          git clone --filter=blob:none --sparse https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/theos/sdks.git /tmp/sdks
+          git clone --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/sdks
           cd /tmp/sdks
           git sparse-checkout set iPhoneOS16.5.sdk
           git lfs pull
