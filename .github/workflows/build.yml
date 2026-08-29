@@ -25,14 +25,14 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
-      - name: Build ldid (code signer)
+      - name: Install ldid (Homebrew)
         run: |
-          sudo apt-get install -y g++ libssl-dev libplist-dev
-          git clone --recursive https://github.com/rpetrich/ldid.git /tmp/ldid
-          cd /tmp/ldid
-          g++ -std=c++17 -O2 ldid.cpp -o ldid
-          sudo cp ldid /usr/local/bin/ldid
-          sudo cp ldid "$THEOS/toolchain/linux/iphone/bin/ldid"
+          if [ ! -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install ldid
+          sudo cp "$(brew --prefix)/bin/ldid" /usr/local/bin/ldid
           ldid 2>&1 | head -1
 
       - name: Install iOS cross toolchain (Linux, public release)
