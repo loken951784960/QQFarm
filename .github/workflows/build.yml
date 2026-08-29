@@ -25,6 +25,16 @@ jobs:
           git clone --recursive https://github.com/theos/theos.git $THEOS
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
+      - name: Build ldid (code signer)
+        run: |
+          sudo apt-get install -y g++ libssl-dev libplist-dev
+          git clone https://github.com/rpetrich/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          g++ -std=c++17 -O2 ldid.cpp lookup2.c sha1.c -o ldid
+          sudo cp ldid /usr/local/bin/ldid
+          sudo cp ldid "$THEOS/toolchain/linux/iphone/bin/ldid"
+          ldid 2>&1 | head -1
+
       - name: Install iOS cross toolchain (Linux, public release)
         run: |
           curl -sL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz -o /tmp/tc.tar.xz
