@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "../utils/QQFarmUtils.h"
 
 // 声明 SRWebSocket 接口以避免编译警告
