@@ -139,7 +139,7 @@ static char kAccountKey;
 
         // Token 标签
         _tokenLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 70, 60, 30)];
-        _tokenLabel.text = @"Token:";
+        _tokenLabel.text = @"密码:";
         _tokenLabel.font = [UIFont systemFontOfSize:14];
         _tokenLabel.textColor = [UIColor blackColor];
         [_settingsView addSubview:_tokenLabel];
@@ -147,7 +147,7 @@ static char kAccountKey;
         // Token 输入框
         _tokenInput = [[UITextField alloc] initWithFrame:CGRectMake(80, 70, 200, 30)];
         _tokenInput.borderStyle = UITextBorderStyleRoundedRect;
-        _tokenInput.placeholder = @"后台要鉴权时填 admin_token";
+        _tokenInput.placeholder = @"后台密码（默认 admin）";
         _tokenInput.font = [UIFont systemFontOfSize:14];
         _tokenInput.textColor = [UIColor blackColor];
         _tokenInput.autocapitalizationType = UITextAutocapitalizationTypeNone;
@@ -225,6 +225,67 @@ static char kAccountKey;
     return self;
 }
 
+// 自动用「后台密码」(默认 admin) 登录 /api/login 换取 x-admin-token，再发受保护请求
+// completion: status=HTTP 状态码, resp=解析后的 JSON, rawData=原始响应, errMsg=网络/登录错误
+- (void)authedRequestWithMethod:(NSString *)method
+                            path:(NSString *)apiPath
+                          params:(NSDictionary *)params
+                      completion:(void (^)(NSInteger status, NSDictionary *resp, NSData *rawData, NSString *errMsg))completion {
+    NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
+    if (server.length == 0) { completion(0, nil, nil, @"请先配置服务器地址"); return; }
+
+    NSString *password = self.tokenInput.text ?: @"";
+    if (password.length == 0) password = @"admin"; // 3007 默认管理员密码
+
+    NSString *baseUrl = server;
+    if ([baseUrl hasSuffix:@"/"]) baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
+
+    // 1) 登录换 token
+    NSURL *loginUrl = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/login", baseUrl]];
+    NSMutableURLRequest *loginReq = [NSMutableURLRequest requestWithURL:loginUrl];
+    loginReq.HTTPMethod = @"POST";
+    [loginReq setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    loginReq.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"username":@"admin", @"password":password} options:0 error:nil];
+    loginReq.timeoutInterval = 15;
+
+    [[[NSURLSession sharedSession] dataTaskWithRequest:loginReq completionHandler:^(NSData *lData, NSURLResponse *lResp, NSError *lErr){
+        if (lErr) { dispatch_async(dispatch_get_main_queue(), ^{ completion(0, nil, nil, lErr.localizedDescription); }); return; }
+        NSInteger lStatus = [(NSHTTPURLResponse *)lResp statusCode];
+        if (lStatus != 200) {
+            NSString *raw = lData ? [[NSString alloc] initWithData:lData encoding:NSUTF8StringEncoding] : @"";
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(lStatus, nil, lData, [NSString stringWithFormat:@"登录失败(HTTP %ld): %@", (long)lStatus, raw]); });
+            return;
+        }
+        NSError *je;
+        NSDictionary *lj = [NSJSONSerialization JSONObjectWithData:lData options:0 error:&je];
+        NSString *token = lj[@"data"][@"token"];
+        if (!token) { dispatch_async(dispatch_get_main_queue(), ^{ completion(lStatus, nil, lData, @"登录成功但未返回 token"); }); return; }
+
+        // 2) 真实请求
+        NSURL *realUrl = [NSURL URLWithString:[NSString stringWithFormat:@"%@%@", baseUrl, apiPath]];
+        if (!realUrl) { dispatch_async(dispatch_get_main_queue(), ^{ completion(0, nil, nil, @"URL 非法"); }); return; }
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:realUrl];
+        req.HTTPMethod = method;
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [req setValue:token forHTTPHeaderField:@"x-admin-token"];
+        if (params) {
+            NSError *pe;
+            req.HTTPBody = [NSJSONSerialization dataWithJSONObject:params options:0 error:&pe];
+            if (pe) { dispatch_async(dispatch_get_main_queue(), ^{ completion(0, nil, nil, @"构建请求数据失败"); }); return; }
+        }
+        req.timeoutInterval = 15;
+        [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *response, NSError *error){
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error) { completion(0, nil, nil, error.localizedDescription); return; }
+                NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+                NSError *pe;
+                NSDictionary *resp = [NSJSONSerialization JSONObjectWithData:data options:0 error:&pe];
+                completion(status, resp, data, nil);
+            });
+        }] resume];
+    }] resume];
+}
+
 - (void)onAddAccountTapped {
     NSLog(@"添加账号");
     
@@ -235,68 +296,25 @@ static char kAccountKey;
     }
     
     [self showCustomConfirmAlertWithTitle:@"添加账号" message:@"是否将当前 Code 添加为新账号？" confirmHandler:^{
-        NSString *server = self.serverInput.text;
-        NSString *token = self.tokenInput.text;
-        
-        if (!server || server.length == 0) {
-            [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
-            return;
-        }
-        
-        // 构建请求参数
         NSDictionary *params = @{
             @"name": @"",
             @"code": code,
             @"platform": @"qq",
             @"loginType": @"manual"
         };
-        
-        // 处理 URL
-        NSString *baseUrl = server;
-        if ([baseUrl hasSuffix:@"/"]) {
-            baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
-        }
-        NSString *urlString = [NSString stringWithFormat:@"%@/api/accounts", baseUrl];
-        NSURL *url = [NSURL URLWithString:urlString];
-        
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.HTTPMethod = @"POST";
-        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (token && token.length > 0) {
-            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-        }
-        
-        NSError *jsonError;
-        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:params options:0 error:&jsonError];
-        if (jsonError) {
-            [self showCustomAlertWithTitle:@"错误" message:@"构建请求数据失败"];
-            return;
-        }
-        request.HTTPBody = jsonData;
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        [self authedRequestWithMethod:@"POST" path:@"/api/accounts" params:params completion:^(NSInteger status, NSDictionary *respDict, NSData *data, NSString *errMsg){
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (error) {
-                    [self showCustomAlertWithTitle:@"添加失败" message:error.localizedDescription];
+                if (errMsg) {
+                    [self showCustomAlertWithTitle:@"添加失败" message:errMsg];
+                } else if ([respDict[@"ok"] boolValue]) {
+                    [self showCustomAlertWithTitle:@"成功" message:@"账号添加成功"];
                 } else {
-                    NSError *jsonError;
-                    NSDictionary *respDict = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-                    if (jsonError) {
-                         NSString *respStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                         [self showCustomAlertWithTitle:@"添加失败" message:[NSString stringWithFormat:@"解析错误: %@", respStr]];
-                    } else if ([respDict[@"ok"] boolValue]) {
-                        [self showCustomAlertWithTitle:@"成功" message:@"账号添加成功"];
-                    } else {
-                        NSString *errMsg = respDict[@"message"] ?: @"未知错误";
-                        [self showCustomAlertWithTitle:@"添加失败" message:errMsg];
-                    }
+                    NSString *m = respDict[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                    [self showCustomAlertWithTitle:@"添加失败" message:m];
                 }
-                
-                // 无论成功失败，都刷新列表
                 [self fetchAccounts];
             });
         }];
-        [task resume];
     }];
 }
 
@@ -458,55 +476,22 @@ static char kAccountKey;
 }
 
 - (void)fetchAccounts {
-    NSString *server = self.serverInput.text;
-    NSString *token = self.tokenInput.text;
-    
-    if (server.length == 0 || token.length == 0) {
+    NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
+    if (server.length == 0) {
         [self renderAccounts:@[]];
         return;
     }
-    
-    NSString *urlString = [server stringByAppendingString:@"/api/accounts"];
-    NSURL *url = [NSURL URLWithString:urlString];
-    if (!url) {
-        [self renderAccounts:@[]];
-        return;
-    }
-    
-    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    request.HTTPMethod = @"GET";
-    [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-    request.timeoutInterval = 10.0;
-    
-    [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self renderAccounts:@[]];
-                [self.refreshControl endRefreshing];
-            });
-            return;
-        }
-        
-        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-        if ([json isKindOfClass:[NSDictionary class]] && [json[@"ok"] boolValue]) {
-            NSDictionary *dataDict = json[@"data"];
-            if ([dataDict isKindOfClass:[NSDictionary class]]) {
-                NSArray *accounts = dataDict[@"accounts"];
-                if ([accounts isKindOfClass:[NSArray class]]) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [self renderAccounts:accounts];
-                        [self.refreshControl endRefreshing];
-                    });
-                    return;
-                }
-            }
-        }
-        
+    [self authedRequestWithMethod:@"GET" path:@"/api/accounts" params:nil completion:^(NSInteger status, NSDictionary *json, NSData *data, NSString *errMsg){
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self renderAccounts:@[]];
+            NSArray *accounts = nil;
+            if (!errMsg && [json isKindOfClass:[NSDictionary class]] && [json[@"ok"] boolValue]) {
+                NSDictionary *dataDict = json[@"data"];
+                if ([dataDict isKindOfClass:[NSDictionary class]]) accounts = dataDict[@"accounts"];
+            }
+            [self renderAccounts:[accounts isKindOfClass:[NSArray class]] ? accounts : @[]];
             [self.refreshControl endRefreshing];
         });
-    }] resume];
+    }];
 }
 
 - (void)renderAccounts:(NSArray *)accounts {
@@ -646,147 +631,65 @@ static char kAccountKey;
 
 - (void)onUpdateTapped:(UIButton *)sender {
     NSDictionary *acc = objc_getAssociatedObject(sender, &kAccountKey);
-    // NSString *lastCode = [QQFarmUtils getLastCapturedCode];
     
     NSString *title = [NSString stringWithFormat:@"更新（%@）", acc[@"name"]];
     NSString *msg = @"是否上传 Code 到当前账号？";
     
     [self showCustomConfirmAlertWithTitle:title message:msg confirmHandler:^{
-        NSLog(@"确认更新账号: %@", acc[@"name"]);
-        
-        NSString *server = self.serverInput.text;
-        NSString *token = self.tokenInput.text;
         NSString *code = [QQFarmUtils getLastCapturedCode];
-        
         if (!code || code.length == 0) {
             [self showCustomAlertWithTitle:@"错误" message:@"未获取到 Code，请先抓取 Code"];
             return;
         }
         
-        if (!server || server.length == 0) {
-            [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
-            return;
-        }
-        
-        // 构建请求参数
         NSMutableDictionary *params = [NSMutableDictionary dictionary];
         if (acc[@"id"]) params[@"id"] = acc[@"id"];
         if (acc[@"name"]) params[@"name"] = acc[@"name"];
         params[@"code"] = code;
         if (acc[@"platform"]) params[@"platform"] = acc[@"platform"];
-        // 继承 loginType，默认 manual
         params[@"loginType"] = acc[@"loginType"] ?: @"manual";
         
-        // 处理 URL
-        NSString *baseUrl = server;
-        if ([baseUrl hasSuffix:@"/"]) {
-            baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
-        }
-        NSString *urlString = [NSString stringWithFormat:@"%@/api/accounts", baseUrl];
-        NSURL *url = [NSURL URLWithString:urlString];
-        
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.HTTPMethod = @"POST";
-        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (token && token.length > 0) {
-            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-        }
-        
-        NSError *jsonError;
-        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:params options:0 error:&jsonError];
-        if (jsonError) {
-            [self showCustomAlertWithTitle:@"错误" message:@"构建请求数据失败"];
-            return;
-        }
-        request.HTTPBody = jsonData;
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        [self authedRequestWithMethod:@"POST" path:@"/api/accounts" params:params completion:^(NSInteger status, NSDictionary *respDict, NSData *data, NSString *errMsg){
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (error) {
-                    [self showCustomAlertWithTitle:@"更新失败" message:error.localizedDescription];
+                if (errMsg) {
+                    [self showCustomAlertWithTitle:@"更新失败" message:errMsg];
+                } else if ([respDict[@"ok"] boolValue]) {
+                    [self showCustomAlertWithTitle:@"成功" message:@"账号 Code 已更新"];
                 } else {
-                    NSError *jsonError;
-                    NSDictionary *respDict = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-                    if (jsonError) {
-                         NSString *respStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                         [self showCustomAlertWithTitle:@"更新失败" message:[NSString stringWithFormat:@"解析错误: %@", respStr]];
-                    } else if ([respDict[@"ok"] boolValue]) {
-                        [self showCustomAlertWithTitle:@"成功" message:@"账号 Code 已更新"];
-                    } else {
-                        // 如果 ok 为 false，尝试显示 message 或者整个 json
-                        NSString *errMsg = respDict[@"message"] ?: @"未知错误";
-                        [self showCustomAlertWithTitle:@"更新失败" message:errMsg];
-                    }
+                    NSString *m = respDict[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                    [self showCustomAlertWithTitle:@"更新失败" message:m];
                 }
-                
-                // 无论成功失败，都刷新列表
                 [self fetchAccounts];
             });
         }];
-        [task resume];
     }];
 }
 
 - (void)onToggleTapped:(UIButton *)sender {
     NSDictionary *acc = objc_getAssociatedObject(sender, &kAccountKey);
     BOOL isRunning = [acc[@"running"] boolValue];
-    // NSString *action = isRunning ? @"停止" : @"启动";
     
     NSString *title = [NSString stringWithFormat:@"操作（%@）", acc[@"name"]];
     NSString *msg = isRunning ? @"是否停止智能助手？" : @"是否启动智能助手？";
     
     [self showCustomConfirmAlertWithTitle:title message:msg confirmHandler:^{
-        NSLog(@"确认%@账号: %@", isRunning ? @"停止" : @"启动", acc[@"name"]);
-        
-        NSString *server = self.serverInput.text;
-        NSString *token = self.tokenInput.text;
-        
-        if (!server || server.length == 0) {
-            [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
-            return;
-        }
-        
-        // 处理 URL
-        NSString *baseUrl = server;
-        if ([baseUrl hasSuffix:@"/"]) {
-            baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
-        }
-        
         NSString *accountId = [NSString stringWithFormat:@"%@", acc[@"id"]];
         NSString *actionPath = isRunning ? @"stop" : @"start";
-        NSString *urlString = [NSString stringWithFormat:@"%@/api/accounts/%@/%@", baseUrl, accountId, actionPath];
-        NSURL *url = [NSURL URLWithString:urlString];
+        NSString *apiPath = [NSString stringWithFormat:@"/api/accounts/%@/%@", accountId, actionPath];
         
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.HTTPMethod = @"POST";
-        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (token && token.length > 0) {
-            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-        }
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        [self authedRequestWithMethod:@"POST" path:apiPath params:nil completion:^(NSInteger status, NSDictionary *respDict, NSData *data, NSString *errMsg){
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (error) {
-                    [self showCustomAlertWithTitle:@"操作失败" message:error.localizedDescription];
+                if (errMsg) {
+                    [self showCustomAlertWithTitle:@"操作失败" message:errMsg];
+                } else if ([respDict[@"ok"] boolValue]) {
+                    [self showCustomAlertWithTitle:@"成功" message:isRunning ? @"已停止" : @"已启动"];
                 } else {
-                    NSError *jsonError;
-                    NSDictionary *respDict = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-                    if (jsonError) {
-                         NSString *respStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                         [self showCustomAlertWithTitle:@"操作失败" message:[NSString stringWithFormat:@"解析错误: %@", respStr]];
-                    } else if ([respDict[@"ok"] boolValue]) {
-                        NSString *successMsg = isRunning ? @"已停止" : @"已启动";
-                        [self showCustomAlertWithTitle:@"成功" message:successMsg];
-                    } else {
-                        NSString *errMsg = respDict[@"message"] ?: @"未知错误";
-                        [self showCustomAlertWithTitle:@"操作失败" message:errMsg];
-                    }
+                    NSString *m = respDict[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                    [self showCustomAlertWithTitle:@"操作失败" message:m];
                 }
-                // 刷新列表
                 [self fetchAccounts];
             });
         }];
-        [task resume];
     }];
 }
 
@@ -796,59 +699,26 @@ static char kAccountKey;
     NSString *msg = @"是否确认删除该账号？！";
     
     [self showCustomConfirmAlertWithTitle:title message:msg confirmHandler:^{
-        NSLog(@"确认删除账号: %@", acc[@"name"]);
-        
-        NSString *server = self.serverInput.text;
-        NSString *token = self.tokenInput.text;
-        
-        if (!server || server.length == 0) {
-            [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
-            return;
-        }
-        
-        // 处理 URL
-        NSString *baseUrl = server;
-        if ([baseUrl hasSuffix:@"/"]) {
-            baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
-        }
-        
         NSString *accountId = [NSString stringWithFormat:@"%@", acc[@"id"]];
-        NSString *urlString = [NSString stringWithFormat:@"%@/api/accounts/%@", baseUrl, accountId];
-        NSURL *url = [NSURL URLWithString:urlString];
+        NSString *apiPath = [NSString stringWithFormat:@"/api/accounts/%@", accountId];
         
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.HTTPMethod = @"DELETE";
-        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (token && token.length > 0) {
-            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-        }
-        
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        [self authedRequestWithMethod:@"DELETE" path:apiPath params:nil completion:^(NSInteger status, NSDictionary *respDict, NSData *data, NSString *errMsg){
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (error) {
-                    [self showCustomAlertWithTitle:@"删除失败" message:error.localizedDescription];
+                if (errMsg) {
+                    [self showCustomAlertWithTitle:@"删除失败" message:errMsg];
+                } else if ([respDict[@"ok"] boolValue]) {
+                    [self showCustomAlertWithTitle:@"成功" message:@"账号已删除"];
                 } else {
-                    NSError *jsonError;
-                    NSDictionary *respDict = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-                    if (jsonError) {
-                         NSString *respStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                         [self showCustomAlertWithTitle:@"删除失败" message:[NSString stringWithFormat:@"解析错误: %@", respStr]];
-                    } else if ([respDict[@"ok"] boolValue]) {
-                        [self showCustomAlertWithTitle:@"成功" message:@"账号已删除"];
-                    } else {
-                        NSString *errMsg = respDict[@"message"] ?: @"未知错误";
-                        [self showCustomAlertWithTitle:@"删除失败" message:errMsg];
-                    }
+                    NSString *m = respDict[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                    [self showCustomAlertWithTitle:@"删除失败" message:m];
                 }
-                // 刷新列表
                 [self fetchAccounts];
             });
         }];
-        [task resume];
     }];
 }
 
-// 手动提交抓包登录：走 /api/accounts（x-admin-token 鉴权，与「添加账号」一致）
+// 提交抓包登录：自动登录换 token 后 POST /api/accounts（与「添加账号」同一套鉴权）
 - (void)onSubmitLoginTapped {
     NSString *code = [QQFarmUtils getLastCapturedCode];
     if (!code || code.length == 0) {
@@ -857,70 +727,33 @@ static char kAccountKey;
     }
 
     NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
-    NSString *token = self.tokenInput.text ?: @"";
     if (server.length == 0) {
         [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
         return;
     }
-    // Token 选填：3007 未启用鉴权时可直接留空
 
     [self showCustomConfirmAlertWithTitle:@"提交抓包登录"
                                   message:@"将用当前捕获的 Code 登录后台（POST /api/accounts），是否继续？"
                            confirmHandler:^{
-        NSString *baseUrl = server;
-        if ([baseUrl hasSuffix:@"/"]) baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
-        NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/accounts", baseUrl]];
-        if (!url) {
-            [self showCustomAlertWithTitle:@"错误" message:@"服务器地址非法"];
-            return;
-        }
-
         NSDictionary *params = @{
             @"name": @"",
             @"code": code,
             @"platform": @"qq",
             @"loginType": @"manual"
         };
-
-        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-        request.HTTPMethod = @"POST";
-        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        if (token && token.length > 0) {
-            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
-        }
-        request.timeoutInterval = 15;
-
-        NSError *jsonError;
-        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:params options:0 error:&jsonError];
-        if (jsonError) {
-            [self showCustomAlertWithTitle:@"错误" message:@"构建请求数据失败"];
-            return;
-        }
-        request.HTTPBody = jsonData;
-
-        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request
-            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (error) {
-                        [self showCustomAlertWithTitle:@"登录失败" message:error.localizedDescription];
-                    } else {
-                        NSInteger status = [(NSHTTPURLResponse *)response statusCode];
-                        NSError *parseError;
-                        NSDictionary *resp = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
-                        if (parseError) {
-                            NSString *raw = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
-                            [self showCustomAlertWithTitle:@"登录失败" message:[NSString stringWithFormat:@"HTTP %ld: %@", (long)status, raw]];
-                        } else if (status >= 200 && status < 300 && [resp[@"ok"] boolValue]) {
-                            [self showCustomAlertWithTitle:@"成功" message:@"抓包登录已提交，后台已用该 Code 登录"];
-                        } else {
-                            NSString *msg = resp[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
-                            [self showCustomAlertWithTitle:@"登录失败" message:msg];
-                        }
-                    }
-                    [self fetchAccounts];
-                });
-            }];
-        [task resume];
+        [self authedRequestWithMethod:@"POST" path:@"/api/accounts" params:params completion:^(NSInteger status, NSDictionary *resp, NSData *data, NSString *errMsg){
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (errMsg) {
+                    [self showCustomAlertWithTitle:@"登录失败" message:errMsg];
+                } else if (status >= 200 && status < 300 && [resp[@"ok"] boolValue]) {
+                    [self showCustomAlertWithTitle:@"成功" message:@"抓包登录已提交，后台已用该 Code 登录"];
+                } else {
+                    NSString *m = resp[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                    [self showCustomAlertWithTitle:@"登录失败" message:m];
+                }
+                [self fetchAccounts];
+            });
+        }];
     }];
 }
 

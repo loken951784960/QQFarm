@@ -6,8 +6,8 @@
 // 注意：Token 使用后端 .env 中的 EXTERNAL_SUBMIT_TOKEN（外部提交接口专用静态令牌），
 // 而不是后台管理员密码。外部接口 /api/external/submit-code 按 uin 去重，同一设备只会产生一个账号。
 static NSString *const kQQFarmDefaultServer = @"http://106.55.41.254:3007";
-// 3007 的后台 API 需要浏览器 localStorage 里的 admin_token 作为 x-admin-token；
-// 插件拿不到该值，必须由用户手动粘贴，因此这里不再内置任何默认 token。
+// 3007 后台 API 需要 x-admin-token；插件改为自动用管理员密码(默认 admin)登录 /api/login 换取，
+// 因此这里内置空 token（运行时若未填写密码则回退到 "admin"）。
 static NSString *const kQQFarmDefaultToken  = @"";
 
 static NSString *gLastCapturedCode = nil;
@@ -245,7 +245,7 @@ static NSString *gLastUploadedCode = nil;
     [task resume];
 }
 
-// 导入好友 GID：POST /api/friend-known-gids/batch-add?accountId=<id>  body {"gids":[...]}
+// 导入好友 GID：先自动登录换 token，再 POST /api/friend-known-gids/batch-add?accountId=<id>  body {"gids":[...]}
 + (void)uploadFriendGids:(NSArray<NSString *> *)gids
               forAccount:(NSString *)accountId
               completion:(void (^)(BOOL ok, NSString *message))completion {
@@ -281,23 +281,12 @@ static NSString *gLastUploadedCode = nil;
 
     NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:[QQFarmUtils configFilePath]];
     NSString *server = cfg[@"QQFarmServer"];
-    NSString *token  = cfg[@"QQFarmToken"];
+    NSString *password = cfg[@"QQFarmToken"];
     if (!server || server.length == 0) server = kQQFarmDefaultServer;
-    if (!token  || token.length == 0)  token  = kQQFarmDefaultToken;
+    if (!password || password.length == 0) password = @"admin";
 
     NSString *base = [self normalizeServerURL:server];
     if ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
-    NSURLComponents *comp = [NSURLComponents componentsWithString:[base stringByAppendingString:@"/api/friend-known-gids/batch-add"]];
-    if (!comp) {
-        if (completion) completion(NO, @"服务器地址非法");
-        return;
-    }
-    comp.queryItems = @[[NSURLQueryItem queryItemWithName:@"accountId" value:accountId]];
-    NSURL *url = comp.URL;
-    if (!url) {
-        if (completion) completion(NO, @"无法组装 URL");
-        return;
-    }
 
     NSError *jsonErr;
     NSData *body = [NSJSONSerialization dataWithJSONObject:@{@"gids": valid} options:0 error:&jsonErr];
@@ -306,23 +295,45 @@ static NSString *gLastUploadedCode = nil;
         return;
     }
 
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
-    req.HTTPMethod = @"POST";
-    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    if (token && token.length > 0) {
-        [req setValue:token forHTTPHeaderField:@"x-admin-token"];
-    }
-    req.HTTPBody = body;
-    req.timeoutInterval = 15;
+    // 1) 登录换 token
+    NSURL *loginUrl = [NSURL URLWithString:[base stringByAppendingString:@"/api/login"]];
+    NSMutableURLRequest *loginReq = [NSMutableURLRequest requestWithURL:loginUrl];
+    loginReq.HTTPMethod = @"POST";
+    [loginReq setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    loginReq.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"username":@"admin", @"password":password} options:0 error:nil];
+    loginReq.timeoutInterval = 15;
 
-    NSLog(@"[QQFarm] 🚀 导入 %lu 个好友 GID (accountId=%@)", (unsigned long)valid.count, accountId);
-    NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req
-        completionHandler:^(NSData *respData, NSURLResponse *response, NSError *e) {
+    [[[NSURLSession sharedSession] dataTaskWithRequest:loginReq completionHandler:^(NSData *lData, NSURLResponse *lResp, NSError *lErr){
+        if (lErr) { dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, lErr.localizedDescription); }); return; }
+        NSInteger lStatus = [(NSHTTPURLResponse *)lResp statusCode];
+        if (lStatus != 200) {
+            NSString *raw = lData ? [[NSString alloc] initWithData:lData encoding:NSUTF8StringEncoding] : @"";
+            dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, [NSString stringWithFormat:@"登录失败(HTTP %ld): %@", (long)lStatus, raw]); });
+            return;
+        }
+        NSError *je;
+        NSDictionary *lj = [NSJSONSerialization JSONObjectWithData:lData options:0 error:&je];
+        NSString *token = lj[@"data"][@"token"];
+        if (!token) { dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, @"登录成功但未返回 token"); }); return; }
+
+        // 2) 真正导入 GID
+        NSURLComponents *comp = [NSURLComponents componentsWithString:[base stringByAppendingString:@"/api/friend-known-gids/batch-add"]];
+        if (!comp) { dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, @"服务器地址非法"); }); return; }
+        comp.queryItems = @[[NSURLQueryItem queryItemWithName:@"accountId" value:accountId]];
+        NSURL *url = comp.URL;
+        if (!url) { dispatch_async(dispatch_get_main_queue(), ^{ if (completion) completion(NO, @"无法组装 URL"); }); return; }
+
+        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+        req.HTTPMethod = @"POST";
+        [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [req setValue:token forHTTPHeaderField:@"x-admin-token"];
+        req.HTTPBody = body;
+        req.timeoutInterval = 15;
+
+        NSLog(@"[QQFarm] 🚀 导入 %lu 个好友 GID (accountId=%@)", (unsigned long)valid.count, accountId);
+        [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *response, NSError *e) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (e) {
-                    if (completion) completion(NO, e.localizedDescription);
-                    return;
-                }
+                if (e) { if (completion) completion(NO, e.localizedDescription); return; }
                 NSInteger status = [(NSHTTPURLResponse *)response statusCode];
                 NSString *resp = respData ? [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] : @"";
                 if (status >= 200 && status < 300) {
@@ -331,8 +342,8 @@ static NSString *gLastUploadedCode = nil;
                     if (completion) completion(NO, [NSString stringWithFormat:@"HTTP %ld: %@", (long)status, resp]);
                 }
             });
-        }];
-    [task resume];
+        }] resume];
+    }] resume];
 }
 
 @end
