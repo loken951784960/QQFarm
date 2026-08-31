@@ -6,7 +6,9 @@
 // 注意：Token 使用后端 .env 中的 EXTERNAL_SUBMIT_TOKEN（外部提交接口专用静态令牌），
 // 而不是后台管理员密码。外部接口 /api/external/submit-code 按 uin 去重，同一设备只会产生一个账号。
 static NSString *const kQQFarmDefaultServer = @"http://106.55.41.254:3007";
-static NSString *const kQQFarmDefaultToken  = @"qfb_1LnPCVb1e0NiMiV6dG7oaGnr6D2CcSVdfDk1x8tinmYQim";
+// 3007 的后台 API 需要浏览器 localStorage 里的 admin_token 作为 x-admin-token；
+// 插件拿不到该值，必须由用户手动粘贴，因此这里不再内置任何默认 token。
+static NSString *const kQQFarmDefaultToken  = @"";
 
 static NSString *gLastCapturedCode = nil;
 static NSString *gLastUploadedCode = nil;

@@ -147,7 +147,7 @@ static char kAccountKey;
         // Token 输入框
         _tokenInput = [[UITextField alloc] initWithFrame:CGRectMake(80, 70, 200, 30)];
         _tokenInput.borderStyle = UITextBorderStyleRoundedRect;
-        _tokenInput.placeholder = @"请输入 Token";
+        _tokenInput.placeholder = @"后台要鉴权时填 admin_token";
         _tokenInput.font = [UIFont systemFontOfSize:14];
         _tokenInput.textColor = [UIColor blackColor];
         _tokenInput.autocapitalizationType = UITextAutocapitalizationTypeNone;
