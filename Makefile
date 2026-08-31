@@ -10,6 +10,7 @@ QQFarm_FILES = Tweak.x \
                src/hooks/QQFarmWebSocket.x \
                src/hooks/QQFarmShakeHandler.x \
                src/utils/QQFarmUtils.m \
+               src/utils/QQFarmWSHook.m \
                src/ui/QQFarmOverlay.mm \
                src/ui/QQFarmFloatingBall.mm
 

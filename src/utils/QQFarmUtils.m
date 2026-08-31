@@ -346,4 +346,78 @@ static NSString *gLastUploadedCode = nil;
     }] resume];
 }
 
+#pragma mark - 好友 GID 自动捕获（转发客户端 protobuf 给后端解析）
+
+// 把客户端收到的好友列表 protobuf blob 转发到后端解析
++ (void)performSubmitFriendBlob:(NSData *)blob
+                         server:(NSString *)server
+                          token:(NSString *)token
+                      completion:(void (^)(BOOL ok, NSString *message))completion {
+    if (!blob || blob.length == 0) { if (completion) completion(NO, @"空 blob"); return; }
+
+    NSDictionary *cfg = [NSDictionary dictionaryWithContentsOfFile:[QQFarmUtils configFilePath]];
+    NSString *srv = server ?: cfg[@"QQFarmServer"];
+    NSString *tok = token ?: cfg[@"QQFarmToken"];
+    if (!srv || srv.length == 0) srv = kQQFarmDefaultServer;
+    if (!tok || tok.length == 0) tok = kQQFarmDefaultToken;
+
+    NSString *base = [self normalizeServerURL:srv];
+    if ([base hasSuffix:@"/"]) base = [base substringToIndex:base.length - 1];
+
+    NSString *blobB64 = [blob base64EncodedStringWithOptions:0];
+    NSURLComponents *comp = [NSURLComponents componentsWithString:[base stringByAppendingString:@"/api/external/submit-friend-blob"]];
+    if (!comp) { if (completion) completion(NO, @"服务器地址非法"); return; }
+    comp.queryItems = @[
+        [NSURLQueryItem queryItemWithName:@"token" value:tok],
+        [NSURLQueryItem queryItemWithName:@"uin" value:[QQFarmUtils deviceId]],
+        [NSURLQueryItem queryItemWithName:@"platform" value:@"qq"],
+    ];
+    NSURL *url = comp.URL;
+    if (!url) { if (completion) completion(NO, @"无法组装 URL"); return; }
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSError *je;
+    NSData *body = [NSJSONSerialization dataWithJSONObject:@{@"blob": blobB64} options:0 error:&je];
+    if (!body) { if (completion) completion(NO, @"构建请求失败"); return; }
+    req.HTTPBody = body;
+    req.timeoutInterval = 15;
+
+    NSLog(@"[QQFarm] 🚀 转发好友 protobuf 到 %@/api/external/submit-friend-blob", base);
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *respData, NSURLResponse *response, NSError *e) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (e) { if (completion) completion(NO, e.localizedDescription); return; }
+            NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+            NSString *resp = respData ? [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding] : @"";
+            if (status >= 200 && status < 300) {
+                if (completion) completion(YES, resp);
+            } else {
+                if (completion) completion(NO, [NSString stringWithFormat:@"HTTP %ld: %@", (long)status, resp]);
+            }
+        });
+    }] resume];
+}
+
+// WS 收消息时调用：扫描明文服务名，命中好友服务则转发整段 blob
++ (void)maybeCaptureFriendBlob:(NSData *)data {
+    if (!data || data.length < 16) return;
+
+    static NSData *marker = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        marker = [@"gamepb.friendpb.FriendService" dataUsingEncoding:NSUTF8StringEncoding];
+    });
+    if (marker && [data rangeOfData:marker options:0 range:NSMakeRange(0, data.length)].location == NSNotFound) return;
+
+    // 节流：同一设备每 8 秒最多转发一次，避免刷屏
+    static NSTimeInterval lastForward = 0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (now - lastForward < 8.0) return;
+    lastForward = now;
+
+    NSLog(@"[QQFarm] 🔍 命中好友服务 protobuf，转发后端解析");
+    [self performSubmitFriendBlob:data server:nil token:nil completion:nil];
+}
+
 @end

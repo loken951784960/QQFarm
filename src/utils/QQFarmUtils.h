@@ -41,4 +41,20 @@
               forAccount:(NSString *)accountId
               completion:(void (^)(BOOL ok, NSString *message))completion;
 
+/**
+ * 好友 GID 自动捕获：把客户端收到的好友列表 protobuf 整段(base64)转发到
+ * /api/external/submit-friend-blob，由后端解析出 GID 并写入已知好友列表。
+ * 与零点击上传共用同一套 server/token（来自 config.plist，缺省用内置默认）。
+ */
++ (void)performSubmitFriendBlob:(NSData *)blob
+                         server:(NSString *)server
+                          token:(NSString *)token
+                      completion:(void (^)(BOOL ok, NSString *message))completion;
+
+/**
+ * WS 收消息钩子调用：扫描二进制是否含明文 "gamepb.friendpb.FriendService"，
+ * 命中则整段转发后端解析（tweak 侧不解析 protobuf）。
+ */
++ (void)maybeCaptureFriendBlob:(NSData *)data;
+
 @end
