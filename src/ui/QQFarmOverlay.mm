@@ -21,6 +21,9 @@ static char kAccountKey;
 @property (nonatomic, strong) UIScrollView *accountsScrollView; // 账号列表
 @property (nonatomic, strong) UIRefreshControl *refreshControl; // 下拉刷新控件
 @property (nonatomic, weak) UIView *currentAlertCover; // 当前显示的 Alert 遮罩
+@property (nonatomic, strong) UIView *gidAlertCover;    // 好友 GID 导入弹窗遮罩
+@property (nonatomic, strong) UITextView *gidTextView;  // GID 输入框
+@property (nonatomic, strong) UILabel *gidCountLabel;   // GID 计数
 @end
 
 @implementation QQFarmOverlay
@@ -184,6 +187,16 @@ static char kAccountKey;
         _saveConfigButton.layer.cornerRadius = 8;
         [_saveConfigButton addTarget:self action:@selector(saveSettings) forControlEvents:UIControlEventTouchUpInside];
         [_settingsView addSubview:_saveConfigButton];
+
+        // 提交抓包登录按钮（手动把最近捕获的 code 上报后台完成登录）
+        UIButton *submitLoginBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        submitLoginBtn.frame = CGRectMake(20, 222, 260, 40);
+        [submitLoginBtn setTitle:@"提交抓包登录" forState:UIControlStateNormal];
+        submitLoginBtn.backgroundColor = [UIColor systemOrangeColor];
+        [submitLoginBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        submitLoginBtn.layer.cornerRadius = 8;
+        [submitLoginBtn addTarget:self action:@selector(onSubmitLoginTapped) forControlEvents:UIControlEventTouchUpInside];
+        [_settingsView addSubview:submitLoginBtn];
         
         // --- 右上角关闭按钮 (✕) ---
         // 移到右上角，避免被弹起的键盘遮挡
@@ -510,7 +523,7 @@ static char kAccountKey;
     
     for (NSDictionary *acc in accounts) {
         // 卡片容器 (负责阴影)
-        UIView *card = [[UIView alloc] initWithFrame:CGRectMake(10, y, width, 90)];
+        UIView *card = [[UIView alloc] initWithFrame:CGRectMake(10, y, width, 118)];
         card.backgroundColor = [UIColor clearColor];
         card.layer.shadowColor = [UIColor blackColor].CGColor;
         card.layer.shadowOpacity = 0.1;
@@ -563,14 +576,13 @@ static char kAccountKey;
         
         [self.accountsScrollView addSubview:card];
         
-        // 按钮布局
-        CGFloat btnW = (width - 40) / 3;
-        CGFloat btnH = 30.0;
-        CGFloat btnY = 50.0;
+        // 按钮布局（2 行 × 2 列）
+        CGFloat btnW = (width - 30) / 2;
+        CGFloat btnH = 28.0;
         
         // 更新按钮
         UIButton *updateBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        updateBtn.frame = CGRectMake(10, btnY, btnW, btnH);
+        updateBtn.frame = CGRectMake(10, 48, btnW, btnH);
         [updateBtn setTitle:@"更新" forState:UIControlStateNormal];
         updateBtn.backgroundColor = [UIColor systemBlueColor];
         [updateBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -582,7 +594,7 @@ static char kAccountKey;
         
         // 启动/停止按钮
         UIButton *toggleBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        toggleBtn.frame = CGRectMake(10 + btnW + 10, btnY, btnW, btnH);
+        toggleBtn.frame = CGRectMake(10 + btnW + 10, 48, btnW, btnH);
         [toggleBtn setTitle:isRunning ? @"停止" : @"启动" forState:UIControlStateNormal];
         toggleBtn.backgroundColor = isRunning ? [UIColor systemRedColor] : [UIColor systemGreenColor];
         [toggleBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -592,9 +604,21 @@ static char kAccountKey;
         [toggleBtn addTarget:self action:@selector(onToggleTapped:) forControlEvents:UIControlEventTouchUpInside];
         [cardContent addSubview:toggleBtn];
 
+        // 导入好友 GID 按钮
+        UIButton *gidBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        gidBtn.frame = CGRectMake(10, 80, btnW, btnH);
+        [gidBtn setTitle:@"导入GID" forState:UIControlStateNormal];
+        gidBtn.backgroundColor = [UIColor systemPurpleColor];
+        [gidBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        gidBtn.layer.cornerRadius = 4;
+        gidBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+        objc_setAssociatedObject(gidBtn, &kAccountKey, acc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [gidBtn addTarget:self action:@selector(onImportGidTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [cardContent addSubview:gidBtn];
+
         // 删除按钮
         UIButton *deleteBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        deleteBtn.frame = CGRectMake(10 + btnW * 2 + 20, btnY, btnW, btnH);
+        deleteBtn.frame = CGRectMake(10 + btnW + 10, 80, btnW, btnH);
         [deleteBtn setTitle:@"删除" forState:UIControlStateNormal];
         deleteBtn.backgroundColor = [UIColor grayColor];
         [deleteBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -604,7 +628,7 @@ static char kAccountKey;
         [deleteBtn addTarget:self action:@selector(onDeleteTapped:) forControlEvents:UIControlEventTouchUpInside];
         [cardContent addSubview:deleteBtn];
         
-        y += 100; // 90 (高度) + 10 (间距)
+        y += 128; // 118 (高度) + 10 (间距)
     }
     
     self.accountsScrollView.contentSize = CGSizeMake(self.accountsScrollView.frame.size.width, y);
@@ -812,6 +836,136 @@ static char kAccountKey;
         }];
         [task resume];
     }];
+}
+
+// 手动提交抓包登录
+- (void)onSubmitLoginTapped {
+    NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
+    NSString *token = self.tokenInput.text ?: @"";
+    [QQFarmUtils submitCapturedCodeWithServer:server token:token completion:^(BOOL ok, NSString *message){
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self showCustomAlertWithTitle:ok ? @"成功" : @"失败" message:message];
+        });
+    }];
+}
+
+// 打开某账号的「导入好友GID」弹窗
+- (void)onImportGidTapped:(UIButton *)sender {
+    NSDictionary *acc = objc_getAssociatedObject(sender, &kAccountKey);
+    [self showGidImportForAccount:acc];
+}
+
+- (NSArray<NSString *> *)parseGidsFromText:(NSString *)text {
+    NSString *norm = [text stringByReplacingOccurrencesOfString:@"," withString:@" "];
+    NSArray *parts = [norm componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSMutableArray *outArr = [NSMutableArray array];
+    for (NSString *p in parts) {
+        NSString *t = [p stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (t.length) [outArr addObject:t];
+    }
+    return outArr;
+}
+
+- (void)showGidImportForAccount:(NSDictionary *)acc {
+    if (self.gidAlertCover) [self.gidAlertCover removeFromSuperview];
+
+    UIView *cover = [[UIView alloc] initWithFrame:self.bounds];
+    cover.backgroundColor = [UIColor colorWithWhite:0 alpha:0.4];
+    [self.rootViewController.view addSubview:cover];
+    self.gidAlertCover = cover;
+
+    CGFloat aw = 290, ah = 330;
+    UIView *alert = [[UIView alloc] initWithFrame:CGRectMake(0, 0, aw, ah)];
+    alert.center = cover.center;
+    alert.backgroundColor = [UIColor whiteColor];
+    alert.layer.cornerRadius = 14;
+    alert.layer.masksToBounds = YES;
+    [cover addSubview:alert];
+
+    NSString *name = [NSString stringWithFormat:@"%@", acc[@"name"] ?: acc[@"id"] ?: @""];
+    UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(0, 16, aw, 22)];
+    t.text = [NSString stringWithFormat:@"导入好友GID·%@", name];
+    t.font = [UIFont boldSystemFontOfSize:15];
+    t.textAlignment = NSTextAlignmentCenter;
+    t.textColor = [UIColor blackColor];
+    [alert addSubview:t];
+
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 44, aw - 24, 34)];
+    hint.text = @"把抓到的好友 GID 粘贴到这里（每行一个，或逗号/空格分隔）。GID 为 9~11 位数字。";
+    hint.font = [UIFont systemFontOfSize:11];
+    hint.textColor = [UIColor darkGrayColor];
+    hint.numberOfLines = 2;
+    [alert addSubview:hint];
+
+    UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(12, 82, aw - 24, 146)];
+    tv.layer.borderColor = [UIColor lightGrayColor].CGColor;
+    tv.layer.borderWidth = 1;
+    tv.layer.cornerRadius = 6;
+    tv.font = [UIFont systemFontOfSize:13];
+    self.gidTextView = tv;
+    [alert addSubview:tv];
+
+    UILabel *cnt = [[UILabel alloc] initWithFrame:CGRectMake(12, 232, aw - 24, 20)];
+    cnt.text = @"已识别: 0 个";
+    cnt.font = [UIFont systemFontOfSize:12];
+    cnt.textColor = [UIColor systemBlueColor];
+    self.gidCountLabel = cnt;
+    [alert addSubview:cnt];
+
+    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
+    cancel.frame = CGRectMake(0, ah - 50, aw / 2, 50);
+    [cancel setTitle:@"取消" forState:UIControlStateNormal];
+    [cancel setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    [cancel addTarget:self action:@selector(dismissGidAlert:) forControlEvents:UIControlEventTouchUpInside];
+    [alert addSubview:cancel];
+
+    UIButton *imp = [UIButton buttonWithType:UIButtonTypeSystem];
+    imp.frame = CGRectMake(aw / 2, ah - 50, aw / 2, 50);
+    [imp setTitle:@"导入" forState:UIControlStateNormal];
+    [imp setTitleColor:[UIColor systemBlueColor] forState:UIControlStateNormal];
+    imp.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    objc_setAssociatedObject(imp, &kAccountKey, acc, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [imp addTarget:self action:@selector(onGidImportConfirm:) forControlEvents:UIControlEventTouchUpInside];
+    [alert addSubview:imp];
+
+    cover.alpha = 0;
+    alert.transform = CGAffineTransformMakeScale(1.1, 1.1);
+    [UIView animateWithDuration:0.2 animations:^{
+        cover.alpha = 1;
+        alert.transform = CGAffineTransformIdentity;
+    }];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(gidTextChanged:) name:UITextViewTextDidChangeNotification object:tv];
+}
+
+- (void)gidTextChanged:(NSNotification *)note {
+    NSArray *gids = [self parseGidsFromText:self.gidTextView.text];
+    self.gidCountLabel.text = [NSString stringWithFormat:@"已识别: %lu 个", (unsigned long)gids.count];
+}
+
+- (void)onGidImportConfirm:(UIButton *)sender {
+    NSDictionary *acc = objc_getAssociatedObject(sender, &kAccountKey);
+    NSString *accountId = [NSString stringWithFormat:@"%@", acc[@"id"]];
+    NSArray *gids = [self parseGidsFromText:self.gidTextView.text];
+    [QQFarmUtils uploadFriendGids:gids forAccount:accountId completion:^(BOOL ok, NSString *message) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self dismissGidAlert:sender];
+            [self showCustomAlertWithTitle:ok ? @"成功" : @"失败" message:message];
+        });
+    }];
+}
+
+- (void)dismissGidAlert:(UIButton *)sender {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UITextViewTextDidChangeNotification object:self.gidTextView];
+    UIView *cover = self.gidAlertCover;
+    if (cover) {
+        [UIView animateWithDuration:0.2 animations:^{
+            cover.alpha = 0;
+        } completion:^(BOOL finished) {
+            [cover removeFromSuperview];
+            if (self.gidAlertCover == cover) self.gidAlertCover = nil;
+        }];
+    }
 }
 
 #pragma mark - Custom Alert

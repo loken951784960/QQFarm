@@ -1,0 +1,6 @@
+# Force LF line endings: the Linux CI (theos/dpkg-deb) rejects CRLF in control files
+* text=auto eol=lf
+*.deb binary
+*.png binary
+*.jpg binary
+*.dylib binary
