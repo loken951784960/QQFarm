@@ -838,14 +838,80 @@ static char kAccountKey;
     }];
 }
 
-// 手动提交抓包登录
+// 手动提交抓包登录：走 /api/accounts（x-admin-token 鉴权，与「添加账号」一致）
 - (void)onSubmitLoginTapped {
+    NSString *code = [QQFarmUtils getLastCapturedCode];
+    if (!code || code.length == 0) {
+        [self showCustomAlertWithTitle:@"错误" message:@"未捕获到 code，请先打开 QQ 农场触发抓包"];
+        return;
+    }
+
     NSString *server = [QQFarmUtils normalizeServerURL:self.serverInput.text] ?: @"";
     NSString *token = self.tokenInput.text ?: @"";
-    [QQFarmUtils submitCapturedCodeWithServer:server token:token completion:^(BOOL ok, NSString *message){
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self showCustomAlertWithTitle:ok ? @"成功" : @"失败" message:message];
-        });
+    if (server.length == 0) {
+        [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
+        return;
+    }
+    if (token.length == 0) {
+        [self showCustomAlertWithTitle:@"错误" message:@"请先填写 Token（后台管理员密码）"];
+        return;
+    }
+
+    [self showCustomConfirmAlertWithTitle:@"提交抓包登录"
+                                  message:@"将用当前捕获的 Code 登录后台（POST /api/accounts），是否继续？"
+                           confirmHandler:^{
+        NSString *baseUrl = server;
+        if ([baseUrl hasSuffix:@"/"]) baseUrl = [baseUrl substringToIndex:baseUrl.length - 1];
+        NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/accounts", baseUrl]];
+        if (!url) {
+            [self showCustomAlertWithTitle:@"错误" message:@"服务器地址非法"];
+            return;
+        }
+
+        NSDictionary *params = @{
+            @"name": @"",
+            @"code": code,
+            @"platform": @"qq",
+            @"loginType": @"manual"
+        };
+
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+        request.HTTPMethod = @"POST";
+        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+        [request setValue:token forHTTPHeaderField:@"x-admin-token"];
+        request.timeoutInterval = 15;
+
+        NSError *jsonError;
+        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:params options:0 error:&jsonError];
+        if (jsonError) {
+            [self showCustomAlertWithTitle:@"错误" message:@"构建请求数据失败"];
+            return;
+        }
+        request.HTTPBody = jsonData;
+
+        NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request
+            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (error) {
+                        [self showCustomAlertWithTitle:@"登录失败" message:error.localizedDescription];
+                    } else {
+                        NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+                        NSError *parseError;
+                        NSDictionary *resp = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
+                        if (parseError) {
+                            NSString *raw = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
+                            [self showCustomAlertWithTitle:@"登录失败" message:[NSString stringWithFormat:@"HTTP %ld: %@", (long)status, raw]];
+                        } else if (status >= 200 && status < 300 && [resp[@"ok"] boolValue]) {
+                            [self showCustomAlertWithTitle:@"成功" message:@"抓包登录已提交，后台已用该 Code 登录"];
+                        } else {
+                            NSString *msg = resp[@"message"] ?: [NSString stringWithFormat:@"HTTP %ld", (long)status];
+                            [self showCustomAlertWithTitle:@"登录失败" message:msg];
+                        }
+                    }
+                    [self fetchAccounts];
+                });
+            }];
+        [task resume];
     }];
 }
 

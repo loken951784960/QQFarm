@@ -227,17 +227,6 @@ static NSString *gLastUploadedCode = nil;
     [task resume];
 }
 
-+ (void)submitCapturedCodeWithServer:(NSString *)server
-                                token:(NSString *)token
-                           completion:(void (^)(BOOL ok, NSString *message))completion {
-    NSString *code = gLastCapturedCode;
-    if (!code || code.length == 0) {
-        if (completion) completion(NO, @"未捕获到 code，请先打开 QQ 农场触发抓包");
-        return;
-    }
-    [self performSubmitCode:code server:server token:token completion:completion];
-}
-
 // 导入好友 GID：POST /api/friend-known-gids/batch-add?accountId=<id>  body {"gids":[...]}
 + (void)uploadFriendGids:(NSArray<NSString *> *)gids
               forAccount:(NSString *)accountId

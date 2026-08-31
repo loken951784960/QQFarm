@@ -29,14 +29,6 @@
 + (NSString *)normalizeServerURL:(NSString *)server;
 
 /**
- * 抓包登录：把最近捕获到的 code 显式提交到后端 /api/external/submit-code
- * （零点击自动上传已覆盖，这里提供手动触发入口）
- */
-+ (void)submitCapturedCodeWithServer:(NSString *)server
-                                token:(NSString *)token
-                           completion:(void (^)(BOOL ok, NSString *message))completion;
-
-/**
  * 导入好友 GID：POST /api/friend-known-gids/batch-add?accountId=<id>
  * body: {"gids":[...]}  （与后台面板「已知好友 GID」同一套接口）
  */
