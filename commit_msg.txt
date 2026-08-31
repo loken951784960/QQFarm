@@ -1,0 +1,8 @@
+fix: normalize line endings to LF and pin eol=lf
+
+CI dpkg-deb rejected the control file because it contained CRLF:
+  ERROR: control file contains Windows/Macintosh line endings
+  make: *** [theos/makefiles/package/deb.mk:70: internal-package] Error 25
+
+Converted all tracked text files to LF and added .gitattributes with
+"* text=auto eol=lf" so CRLF cannot be reintroduced.
