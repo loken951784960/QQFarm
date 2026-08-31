@@ -197,6 +197,16 @@ static char kAccountKey;
         submitLoginBtn.layer.cornerRadius = 8;
         [submitLoginBtn addTarget:self action:@selector(onSubmitLoginTapped) forControlEvents:UIControlEventTouchUpInside];
         [_settingsView addSubview:submitLoginBtn];
+
+        // 恢复默认配置按钮（把服务器/Token 重置为 deb 内置默认值，用于清理旧版残留配置）
+        UIButton *restoreDefaultsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        restoreDefaultsBtn.frame = CGRectMake(20, 274, 260, 40);
+        [restoreDefaultsBtn setTitle:@"恢复默认配置" forState:UIControlStateNormal];
+        restoreDefaultsBtn.backgroundColor = [UIColor systemGrayColor];
+        [restoreDefaultsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        restoreDefaultsBtn.layer.cornerRadius = 8;
+        [restoreDefaultsBtn addTarget:self action:@selector(onRestoreDefaultsTapped) forControlEvents:UIControlEventTouchUpInside];
+        [_settingsView addSubview:restoreDefaultsBtn];
         
         // --- 右上角关闭按钮 (✕) ---
         // 移到右上角，避免被弹起的键盘遮挡
@@ -852,10 +862,7 @@ static char kAccountKey;
         [self showCustomAlertWithTitle:@"错误" message:@"请先配置服务器地址"];
         return;
     }
-    if (token.length == 0) {
-        [self showCustomAlertWithTitle:@"错误" message:@"请先填写 Token（后台管理员密码）"];
-        return;
-    }
+    // Token 选填：3007 未启用鉴权时可直接留空
 
     [self showCustomConfirmAlertWithTitle:@"提交抓包登录"
                                   message:@"将用当前捕获的 Code 登录后台（POST /api/accounts），是否继续？"
@@ -878,7 +885,9 @@ static char kAccountKey;
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
         request.HTTPMethod = @"POST";
         [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        [request setValue:token forHTTPHeaderField:@"x-admin-token"];
+        if (token && token.length > 0) {
+            [request setValue:token forHTTPHeaderField:@"x-admin-token"];
+        }
         request.timeoutInterval = 15;
 
         NSError *jsonError;
@@ -912,6 +921,19 @@ static char kAccountKey;
                 });
             }];
         [task resume];
+    }];
+}
+
+// 恢复默认配置：删除本地 config.plist 并重新写入默认 3007 + 空 token
+- (void)onRestoreDefaultsTapped {
+    [self showCustomConfirmAlertWithTitle:@"恢复默认配置"
+                                  message:@"将清空本地配置并恢复为默认服务器（3007）和 Token，是否继续？"
+                           confirmHandler:^{
+        [QQFarmUtils restoreDefaultConfig];
+        // 立即刷新设置页输入框
+        self.serverInput.text = [QQFarmUtils normalizeServerURL:[self loadConfig][@"QQFarmServer"]];
+        self.tokenInput.text = [self loadConfig][@"QQFarmToken"];
+        [self showCustomAlertWithTitle:@"成功" message:@"已恢复默认配置，请确认设置页显示 3007"];
     }];
 }
 

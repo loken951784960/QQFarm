@@ -24,6 +24,11 @@
 + (void)ensureDefaultConfig;
 
 /**
+ * 恢复默认配置：删除本地 config.plist 并重新写入默认服务器/Token
+ */
++ (void)restoreDefaultConfig;
+
+/**
  * 规范化服务器地址：缺少 http(s):// 时自动补回 http://
  */
 + (NSString *)normalizeServerURL:(NSString *)server;

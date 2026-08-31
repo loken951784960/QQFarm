@@ -111,6 +111,22 @@ static NSString *gLastUploadedCode = nil;
     NSLog(@"[QQFarm] %@写入默认配置 -> %@", ok ? @"✅" : @"❌", path);
 }
 
+// 恢复默认配置：删除本地 config.plist 并重新写入默认服务器/Token
++ (void)restoreDefaultConfig {
+    NSString *path = [self configFilePath];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:path]) {
+        NSError *err = nil;
+        [fm removeItemAtPath:path error:&err];
+        if (err) {
+            NSLog(@"[QQFarm] 删除旧配置失败: %@", err.localizedDescription);
+        } else {
+            NSLog(@"[QQFarm] ✅ 已删除旧配置: %@", path);
+        }
+    }
+    [self ensureDefaultConfig];
+}
+
 #pragma mark - 稳定设备标识（后端据此去重，避免每次识别都新建账号）
 
 // 在 Keychain 持久化一个设备级 UUID：即使重装 deb / App 也不变，
